@@ -1,53 +1,37 @@
 <!DOCTYPE html>
 <html lang="uk">
 <head>
-  <meta charset="UTF-8"/>
-  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
-  <title>Автобусний інформатор</title>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+<title>Автобусний інформатор</title>
 
-  <link rel="stylesheet" href="https://unpkg.com/leaflet/dist/leaflet.css"/>
+<link rel="stylesheet" href="https://unpkg.com/leaflet/dist/leaflet.css"/>
 
-  <style>
-    body {
-      font-family: Arial, sans-serif;
-      background: #f5f5f5;
-      padding: 20px;
-    }
-    h1, h2 { color: #333; }
-    button, input[type="file"] {
-      padding: 10px 16px;
-      font-size: 16px;
-      margin: 5px;
-      border: none;
-      border-radius: 8px;
-      background-color: #007bff;
-      color: white;
-      cursor: pointer;
-    }
-    button:hover { background-color: #0056b3; }
-    .card {
-      background: white;
-      border-radius: 12px;
-      padding: 20px;
-      margin: 20px 0;
-      box-shadow: 0 4px 8px rgba(0,0,0,0.1);
-    }
-    .time { color: gray; font-size: 14px; }
-    ul { list-style: none; padding: 0; }
-    li { margin: 5px 0; }
-    #map {
-      height: 400px;
-      border-radius: 12px;
-    }
-    textarea {
-      width: 100%;
-      height: 120px;
-      margin-top: 10px;
-      padding: 10px;
-      border-radius: 8px;
-      font-family: monospace;
-    }
-  </style>
+<style>
+body {
+  font-family: Arial, sans-serif;
+  background: #f5f5f5;
+  padding: 20px;
+}
+h1,h2 { color:#333; }
+button,input[type="file"]{
+  padding:10px 16px;font-size:16px;margin:5px;border:none;
+  border-radius:8px;background-color:#007bff;color:white;cursor:pointer;
+}
+button:hover {background-color:#0056b3;}
+.card {
+  background:white;border-radius:12px;padding:20px;margin:20px 0;
+  box-shadow:0 4px 8px rgba(0,0,0,0.1);
+}
+.time{color:gray;font-size:14px;}
+ul{list-style:none;padding:0;}
+li{margin:5px 0;}
+#map{height:400px;border-radius:12px;}
+textarea{
+  width:100%;height:120px;margin-top:10px;padding:10px;border-radius:8px;
+  font-family: monospace;
+}
+</style>
 </head>
 
 <body>
@@ -71,179 +55,166 @@
 </div>
 
 <div class="card">
-  <h2>Мапа</h2>
+  <h2>Мапа (клік — додати зупинку)</h2>
+  <p>Клікніть по мапі, щоб додати нову зупинку</p>
   <div id="map"></div>
 </div>
 
 <audio id="clickSound" src="click.mp3"></audio>
 
 <script src="https://unpkg.com/leaflet/dist/leaflet.js"></script>
-
 <script>
-/* ================= ДАНІ ================= */
+
+/* ================== ДАНІ ================== */
 
 let texts = [];
 let stops = [];
 let index = 0;
-
 const AUTO_DISTANCE = 50; // метри
 let lastAutoIndex = -1;
 
 const historyList = document.getElementById("historyList");
 const clickSound = document.getElementById("clickSound");
 
-/* ================= МУЖСЬКИЙ ГОЛОС ================= */
+/* ================== МУЖСЬКИЙ ГОЛОС ================== */
 
 let maleVoice = null;
 
-function loadVoices() {
+function loadVoices(){
   const voices = speechSynthesis.getVoices();
   maleVoice = voices.find(v =>
-    v.lang === "uk-UA" &&
-    (
-      v.name.toLowerCase().includes("ostap") ||
-      v.name.toLowerCase().includes("pavlo") ||
-      v.name.toLowerCase().includes("male") ||
-      v.name.toLowerCase().includes("google")
-    )
-  ) || voices.find(v => v.lang === "uk-UA");
+    v.lang==="uk-UA" &&
+    (v.name.toLowerCase().includes("ostap") ||
+     v.name.toLowerCase().includes("pavlo") ||
+     v.name.toLowerCase().includes("male") ||
+     v.name.toLowerCase().includes("google"))
+  ) || voices.find(v=>v.lang==="uk-UA");
 }
 speechSynthesis.onvoiceschanged = loadVoices;
 
-function speak(text) {
+function speak(text){
   const u = new SpeechSynthesisUtterance(text);
-  u.lang = "uk-UA";
-  if (maleVoice) u.voice = maleVoice;
+  u.lang="uk-UA";
+  if(maleVoice) u.voice=maleVoice;
   speechSynthesis.speak(u);
 }
 
-/* ================= ЛОГІКА «ДАЛІ» ================= */
+/* ================== КНОПКИ ================== */
 
-function nextText() {
-  if (index >= texts.length) return;
-
+function nextText(){
+  if(index>=texts.length) return;
   const time = new Date().toLocaleTimeString();
-
   document.getElementById("displayText").textContent = texts[index];
-  document.getElementById("timeInfo").textContent = "Час: " + time;
+  document.getElementById("timeInfo").textContent = "Час: "+time;
 
   clickSound.play();
   speak("Наступна зупинка");
   speak(texts[index]);
 
-  const li = document.createElement("li");
-  li.textContent = texts[index] + " (" + time + ")";
+  const li=document.createElement("li");
+  li.textContent=texts[index]+" ("+time+")";
   historyList.appendChild(li);
 
   index++;
 }
 
-function resetText() {
-  index = 0;
-  lastAutoIndex = -1;
-  document.getElementById("displayText").textContent = "Очікування місцеположення…";
-  document.getElementById("timeInfo").textContent = "";
-  historyList.innerHTML = "";
+function resetText(){
+  index=0;
+  lastAutoIndex=-1;
+  document.getElementById("displayText").textContent="Очікування місцеположення…";
+  document.getElementById("timeInfo").textContent="";
+  historyList.innerHTML="";
 }
 
-/* ================= МАПА ================= */
+/* ================== МАПА ================== */
 
-const map = L.map("map").setView([50.4501, 30.5234], 13);
-
-L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
-  attribution: "© OpenStreetMap"
-}).addTo(map);
-
+const map = L.map("map").setView([50.4501,30.5234],13);
+L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png",{attribution:"© OpenStreetMap"}).addTo(map);
 let layer = L.layerGroup().addTo(map);
-let userMarker = L.marker([50.4501, 30.5234]).addTo(map);
+let userMarker = L.marker([50.4501,30.5234]).addTo(map);
 
-/* ================= ГЕОДИСТАНЦІЯ ================= */
+/* ================== ГЕОДИСТАНЦІЯ ================== */
 
-function distance(a, b) {
-  const R = 6371000;
-  const dLat = (b.lat - a.lat) * Math.PI / 180;
-  const dLon = (b.lng - a.lng) * Math.PI / 180;
-  const lat1 = a.lat * Math.PI / 180;
-  const lat2 = b.lat * Math.PI / 180;
-
-  const h =
-    Math.sin(dLat / 2) ** 2 +
-    Math.cos(lat1) * Math.cos(lat2) *
-    Math.sin(dLon / 2) ** 2;
-
-  return 2 * R * Math.asin(Math.sqrt(h));
+function distance(a,b){
+  const R=6371000;
+  const dLat=(b.lat-a.lat)*Math.PI/180;
+  const dLon=(b.lng-a.lng)*Math.PI/180;
+  const lat1=a.lat*Math.PI/180;
+  const lat2=b.lat*Math.PI/180;
+  const h=Math.sin(dLat/2)**2 + Math.cos(lat1)*Math.cos(lat2)*Math.sin(dLon/2)**2;
+  return 2*R*Math.asin(Math.sqrt(h));
 }
 
-/* ================= АВТОКЛИК ================= */
+/* ================== АВТОКЛИК ================== */
 
-function checkAutoNext(pos) {
-  if (index >= stops.length) return;
-
-  const d = distance(pos, stops[index].latlng);
-  if (d <= AUTO_DISTANCE && index !== lastAutoIndex) {
-    lastAutoIndex = index;
-    nextText(); // АВТОКЛИК
+function checkAutoNext(pos){
+  if(index>=stops.length) return;
+  const d = distance(pos,stops[index].latlng);
+  if(d<=AUTO_DISTANCE && index!==lastAutoIndex){
+    lastAutoIndex=index;
+    nextText();
   }
 }
 
-/* ================= GPS ================= */
+/* ================== GPS ================== */
 
-if (navigator.geolocation) {
-  navigator.geolocation.watchPosition(pos => {
-    const latlng = {
-      lat: pos.coords.latitude,
-      lng: pos.coords.longitude
-    };
-
+if(navigator.geolocation){
+  navigator.geolocation.watchPosition(pos=>{
+    const latlng={lat:pos.coords.latitude,lng:pos.coords.longitude};
     userMarker.setLatLng(latlng);
-    map.setView(latlng, map.getZoom());
-
+    map.setView(latlng,map.getZoom());
     checkAutoNext(latlng);
-  }, err => {
-    alert("Помилка GPS: " + err.message);
-  }, {
-    enableHighAccuracy: true,
-    maximumAge: 1000
-  });
+  },err=>{alert("Помилка GPS: "+err.message);},{enableHighAccuracy:true,maximumAge:1000});
 }
 
-/* ================= ЗУПИНКИ ================= */
+/* ================== ЗУПИНКИ ================== */
 
-function applyStops() {
+function applyStops(){
   layer.clearLayers();
-  stops = [];
-  texts = [];
-
-  const lines = document.getElementById("stopsEditor").value.trim().split("\n");
-
-  lines.forEach(line => {
-    const p = line.split(",");
-    if (p.length === 3) {
-      const name = p[0].trim();
-      const lat = parseFloat(p[1]);
-      const lon = parseFloat(p[2]);
-
-      const latlng = L.latLng(lat, lon);
+  stops=[];
+  texts=[];
+  const lines=document.getElementById("stopsEditor").value.trim().split("\n");
+  lines.forEach(line=>{
+    const p=line.split(",");
+    if(p.length===3){
+      const name=p[0].trim();
+      const lat=parseFloat(p[1]);
+      const lon=parseFloat(p[2]);
+      const latlng=L.latLng(lat,lon);
       texts.push(name);
-      stops.push({ name, latlng });
+      stops.push({name,latlng});
       L.marker(latlng).addTo(layer).bindPopup(name);
     }
   });
-
   resetText();
 }
 
-/* ================= ЗА ЗАМОВЧУВАННЯМ ================= */
+/* ================== ДОБАВЛЕННЯ МАРКЕРА КЛІКОМ ================== */
 
-document.getElementById("stopsEditor").value =
+map.on("click",e=>{
+  const name=prompt("Назва зупинки:");
+  if(!name) return;
+  const latlng=e.latlng;
+  texts.push(name);
+  stops.push({name,latlng});
+  L.marker(latlng).addTo(layer).bindPopup(name);
+  updateStopsEditor();
+});
+
+function updateStopsEditor(){
+  document.getElementById("stopsEditor").value = stops.map(s=>`${s.name},${s.latlng.lat.toFixed(6)},${s.latlng.lng.toFixed(6)}`).join("\n");
+}
+
+/* ================== ЗА ЗАМОВЧУВАННЯМ ================== */
+
+document.getElementById("stopsEditor").value=
 `Київ,50.4501,30.5234
 Житомир,50.2547,28.6587
 Рівне,50.6199,26.2516
 Луцьк,50.7472,25.3254
 Львів,49.8397,24.0297`;
-
 applyStops();
-</script>
 
+</script>
 </body>
 </html>
