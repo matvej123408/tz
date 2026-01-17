@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8"/>
   <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
-  <title>Редактор автобусного маршруту + мапа</title>
+  <title>Автобусний інформатор</title>
 
   <link rel="stylesheet" href="https://unpkg.com/leaflet/dist/leaflet.css"/>
 
@@ -14,7 +14,7 @@
       padding: 20px;
     }
     h1, h2 { color: #333; }
-    button, input[type="file"] {
+    button {
       padding: 10px 16px;
       font-size: 16px;
       margin: 5px;
@@ -32,14 +32,9 @@
       margin: 20px 0;
       box-shadow: 0 4px 8px rgba(0,0,0,0.1);
     }
-    .time { color: gray; font-size: 14px; }
-    ul { list-style: none; padding: 0; }
-    li { margin: 5px 0; }
     #map {
       height: 400px;
-      margin-top: 20px;
       border-radius: 12px;
-      overflow: hidden;
     }
     textarea {
       width: 100%;
@@ -54,63 +49,37 @@
 
 <body>
 
-<!-- АУДІО МЕНЮ -->
 <div class="card">
-  <h2>Аудіо меню</h2>
-  <input type="file" accept=".mp3" multiple onchange="importSounds(event)">
-  <div id="audioMenu"></div>
+  <h1 id="displayText">Очікування руху…</h1>
 </div>
 
-<!-- ОСНОВНИЙ БЛОК -->
-<div class="card">
-  <h1 id="displayText">Натисніть «Далі»</h1>
-  <p class="time" id="timeInfo"></p>
-  <button onclick="nextText()">Далі</button>
-  <button onclick="resetText()">Скинути</button>
-</div>
-
-<!-- ІСТОРІЯ -->
-<div class="card">
-  <h2>Історія</h2>
-  <ul id="historyList"></ul>
-</div>
-
-<audio id="clickSound" src="click.mp3"></audio>
-
-<!-- РЕДАКТОР ЗУПИНОК -->
 <div class="card">
   <h2>Редактор зупинок</h2>
-  <p>Формат: назва,широта,довгота (кожен рядок)</p>
   <textarea id="stopsEditor"></textarea><br>
-  <button onclick="applyStops()">Застосувати</button>
-  <button onclick="addMarkerMode()">Додати зупинку на мапі</button>
+  <button onclick="applyStops()">Застосувати маршрут</button>
 </div>
 
-<!-- МАПА -->
 <div class="card">
-  <h2>Мапа маршруту</h2>
+  <h2>Мапа (клік — рух автобуса)</h2>
   <div id="map"></div>
 </div>
 
 <script src="https://unpkg.com/leaflet/dist/leaflet.js"></script>
 
 <script>
-/* ================= ДАНІ ================= */
+/* ===== ДАНІ ===== */
 
-let texts = [];
-let index = 0;
-let addingMarker = false;
+let stops = [];
+let stopIndex = 0;
+let announced = new Set();
+const AUTO_DISTANCE = 50; // метри
 
-const historyList = document.getElementById("historyList");
-const clickSound = document.getElementById("clickSound");
-
-/* ================= МУЖСЬКИЙ ГОЛОС ================= */
+/* ===== МУЖСЬКИЙ ГОЛОС ===== */
 
 let maleVoice = null;
 
 function loadVoices() {
   const voices = speechSynthesis.getVoices();
-
   maleVoice = voices.find(v =>
     v.lang === "uk-UA" &&
     (
@@ -119,18 +88,9 @@ function loadVoices() {
       v.name.toLowerCase().includes("male") ||
       v.name.toLowerCase().includes("google")
     )
-  );
-
-  if (!maleVoice) {
-    maleVoice = voices.find(v => v.lang === "uk-UA");
-  }
-
-  console.log("Голос:", maleVoice ? maleVoice.name : "не знайдено");
+  ) || voices.find(v => v.lang === "uk-UA");
 }
-
 speechSynthesis.onvoiceschanged = loadVoices;
-
-/* ================= ОЗВУЧКА ================= */
 
 function speak(text) {
   const u = new SpeechSynthesisUtterance(text);
@@ -139,54 +99,78 @@ function speak(text) {
   speechSynthesis.speak(u);
 }
 
-/* ================= КНОПКИ ================= */
+/* ===== МАПА ===== */
 
-function nextText() {
-  if (index >= texts.length) return;
-
-  const now = new Date();
-  const timeStr = now.toLocaleTimeString();
-
-  document.getElementById("displayText").textContent = texts[index];
-  document.getElementById("timeInfo").textContent = "Час: " + timeStr;
-
-  clickSound.play();
-
-  speak("Наступна зупинка");
-  speak(texts[index]);
-
-  const li = document.createElement("li");
-  li.textContent = texts[index] + " (" + timeStr + ")";
-  historyList.appendChild(li);
-
-  index++;
-}
-
-function resetText() {
-  index = 0;
-  document.getElementById("displayText").textContent = "Натисніть «Далі»";
-  document.getElementById("timeInfo").textContent = "";
-  historyList.innerHTML = "";
-}
-
-/* ================= МАПА ================= */
-
-const map = L.map("map").setView([50.4501, 30.5234], 7);
+const map = L.map("map").setView([50.4501, 30.5234], 13);
 
 L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
-  attribution: "© OpenStreetMap",
-  maxZoom: 18
+  attribution: "© OpenStreetMap"
 }).addTo(map);
 
-let markerLayer = L.layerGroup().addTo(map);
+let layer = L.layerGroup().addTo(map);
+
+// автобус
+let busMarker = L.marker([50.4501, 30.5234], {
+  icon: L.divIcon({
+    html: "🚌",
+    iconSize: [30, 30],
+    className: ""
+  })
+}).addTo(map);
+
+/* ===== ГЕОДИСТАНЦІЯ ===== */
+
+function distance(a, b) {
+  const R = 6371000;
+  const dLat = (b.lat - a.lat) * Math.PI / 180;
+  const dLon = (b.lng - a.lng) * Math.PI / 180;
+  const lat1 = a.lat * Math.PI / 180;
+  const lat2 = b.lat * Math.PI / 180;
+
+  const x = dLat / 2;
+  const y = dLon / 2;
+
+  const h =
+    Math.sin(x) * Math.sin(x) +
+    Math.cos(lat1) * Math.cos(lat2) *
+    Math.sin(y) * Math.sin(y);
+
+  return 2 * R * Math.asin(Math.sqrt(h));
+}
+
+/* ===== АВТООЗВУЧКА ===== */
+
+function checkAutoAnnouncement() {
+  const busPos = busMarker.getLatLng();
+
+  stops.forEach((stop, i) => {
+    if (announced.has(i)) return;
+
+    const d = distance(busPos, stop.latlng);
+    if (d <= AUTO_DISTANCE) {
+      announced.add(i);
+      document.getElementById("displayText").textContent = stop.name;
+      speak("Наступна зупинка");
+      speak(stop.name);
+    }
+  });
+}
+
+/* ===== РУХ АВТОБУСА (КЛІК ПО МАПІ) ===== */
+
+map.on("click", e => {
+  busMarker.setLatLng(e.latlng);
+  checkAutoAnnouncement();
+});
+
+/* ===== ЗУПИНКИ ===== */
 
 function applyStops() {
-  const text = document.getElementById("stopsEditor").value.trim();
-  const lines = text.split("\n");
+  layer.clearLayers();
+  stops = [];
+  announced.clear();
 
-  texts = [];
-  markerLayer.clearLayers();
-  const coords = [];
+  const lines = document.getElementById("stopsEditor").value.trim().split("\n");
 
   lines.forEach(line => {
     const p = line.split(",");
@@ -195,43 +179,13 @@ function applyStops() {
       const lat = parseFloat(p[1]);
       const lon = parseFloat(p[2]);
 
-      if (!isNaN(lat) && !isNaN(lon)) {
-        texts.push(name);
-        coords.push([lat, lon]);
-        L.marker([lat, lon]).addTo(markerLayer).bindPopup(name);
-      }
+      const marker = L.marker([lat, lon]).addTo(layer).bindPopup(name);
+      stops.push({ name, latlng: L.latLng(lat, lon), marker });
     }
   });
-
-  if (coords.length > 1) {
-    L.polyline(coords, { color: "blue", weight: 4 }).addTo(markerLayer);
-    map.fitBounds(coords);
-  }
-
-  resetText();
 }
 
-function addMarkerMode() {
-  alert("Клікніть на мапі, щоб додати зупинку");
-  addingMarker = true;
-}
-
-map.on("click", e => {
-  if (!addingMarker) return;
-
-  const name = prompt("Введіть назву зупинки:");
-  if (name) {
-    const lat = e.latlng.lat.toFixed(6);
-    const lon = e.latlng.lng.toFixed(6);
-
-    const editor = document.getElementById("stopsEditor");
-    editor.value += (editor.value.trim() ? "\n" : "") + `${name},${lat},${lon}`;
-    applyStops();
-  }
-  addingMarker = false;
-});
-
-/* ================= ЗУПИНКИ ЗА ЗАМОВЧУВАННЯМ ================= */
+/* ===== ДАНІ ЗА ЗАМОВЧУВАННЯМ ===== */
 
 document.getElementById("stopsEditor").value =
 `Київ,50.4501,30.5234
@@ -241,28 +195,6 @@ document.getElementById("stopsEditor").value =
 Львів,49.8397,24.0297`;
 
 applyStops();
-
-/* ================= КОРИСТУВАЦЬКЕ АУДІО ================= */
-
-function importSounds(event) {
-  const files = event.target.files;
-  const menu = document.getElementById("audioMenu");
-
-  for (let i = 0; i < files.length; i++) {
-    const file = files[i];
-    const audio = new Audio(URL.createObjectURL(file));
-    audio.id = "userAudio" + Date.now() + i;
-
-    const div = document.createElement("div");
-    div.innerHTML = `
-      <strong>${file.name}</strong><br>
-      <button onclick="document.getElementById('${audio.id}').play()">▶️</button>
-      <button onclick="document.getElementById('${audio.id}').pause()">⏸</button>
-    `;
-    div.appendChild(audio);
-    menu.appendChild(div);
-  }
-}
 </script>
 
 </body>
