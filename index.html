@@ -1,56 +1,269 @@
 <!DOCTYPE html>
-<html lang="ru">
+<html lang="uk">
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Текст и Время</title>
-    <style>
-        body { font-family: Arial, sans-serif; text-align: center; padding: 20px; }
-        button { padding: 10px 20px; margin: 10px; font-size: 18px; }
-        .time { color: gray; font-size: 14px; }
-        ul { list-style-type: none; padding: 0; }
-        li { margin: 5px 0; }
-    </style>
+  <meta charset="UTF-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>Редактор автобусного маршруту + мапа</title>
+
+  <link rel="stylesheet" href="https://unpkg.com/leaflet/dist/leaflet.css"/>
+
+  <style>
+    body {
+      font-family: Arial, sans-serif;
+      background: #f5f5f5;
+      padding: 20px;
+    }
+    h1, h2 { color: #333; }
+    button, input[type="file"] {
+      padding: 10px 16px;
+      font-size: 16px;
+      margin: 5px;
+      border: none;
+      border-radius: 8px;
+      background-color: #007bff;
+      color: white;
+      cursor: pointer;
+    }
+    button:hover { background-color: #0056b3; }
+    .card {
+      background: white;
+      border-radius: 12px;
+      padding: 20px;
+      margin: 20px 0;
+      box-shadow: 0 4px 8px rgba(0,0,0,0.1);
+    }
+    .time { color: gray; font-size: 14px; }
+    ul { list-style: none; padding: 0; }
+    li { margin: 5px 0; }
+    #map {
+      height: 400px;
+      margin-top: 20px;
+      border-radius: 12px;
+      overflow: hidden;
+    }
+    textarea {
+      width: 100%;
+      height: 120px;
+      margin-top: 10px;
+      padding: 10px;
+      border-radius: 8px;
+      font-family: monospace;
+    }
+  </style>
 </head>
+
 <body>
 
-    <h1 id="displayText">Нажми "Далее"</h1>
-    <p class="time" id="timeInfo"></p>
+<!-- АУДІО МЕНЮ -->
+<div class="card">
+  <h2>Аудіо меню</h2>
+  <input type="file" accept=".mp3" multiple onchange="importSounds(event)">
+  <div id="audioMenu"></div>
+</div>
 
-    <button onclick="nextText()">Далее</button>
-    <button onclick="resetText()">Начать сначала</button>
+<!-- ОСНОВНИЙ БЛОК -->
+<div class="card">
+  <h1 id="displayText">Натисніть «Далі»</h1>
+  <p class="time" id="timeInfo"></p>
+  <button onclick="nextText()">Далі</button>
+  <button onclick="resetText()">Скинути</button>
+</div>
 
-    <h2>История:</h2>
-    <ul id="historyList"></ul>
+<!-- ІСТОРІЯ -->
+<div class="card">
+  <h2>Історія</h2>
+  <ul id="historyList"></ul>
+</div>
 
-    <script>
-        let texts = ["Steistrasse", "Landgericht", "Behordenzentrum", "Berliner Platz", "Nahrungsberg", "Lutherberg", "Friedenstrasse"];
-        let index = 0;
-        let historyList = document.getElementById("historyList");
+<audio id="clickSound" src="click.mp3"></audio>
 
-        function nextText() {
-            if (index < texts.length) {
-                let now = new Date();
-                let timeStr = now.getHours() + ":" + now.getMinutes() + ":" + now.getSeconds();
-                
-                document.getElementById("displayText").textContent = texts[index];
-                document.getElementById("timeInfo").textContent = "Нажато в " + timeStr;
-                
-                let listItem = document.createElement("li");
-                listItem.textContent = texts[index] + " (время: " + timeStr + ")";
-                historyList.appendChild(listItem);
-                
-                index++;
-            }
-        }
+<!-- РЕДАКТОР ЗУПИНОК -->
+<div class="card">
+  <h2>Редактор зупинок</h2>
+  <p>Формат: назва,широта,довгота (кожен рядок)</p>
+  <textarea id="stopsEditor"></textarea><br>
+  <button onclick="applyStops()">Застосувати</button>
+  <button onclick="addMarkerMode()">Додати зупинку на мапі</button>
+</div>
 
-        function resetText() {
-            index = 0;
-            document.getElementById("displayText").textContent = "Нажми 'Далее'";
-            document.getElementById("timeInfo").textContent = "";
-            historyList.innerHTML = "";
-        }
-    </script>
+<!-- МАПА -->
+<div class="card">
+  <h2>Мапа маршруту</h2>
+  <div id="map"></div>
+</div>
+
+<script src="https://unpkg.com/leaflet/dist/leaflet.js"></script>
+
+<script>
+/* ================= ДАНІ ================= */
+
+let texts = [];
+let index = 0;
+let addingMarker = false;
+
+const historyList = document.getElementById("historyList");
+const clickSound = document.getElementById("clickSound");
+
+/* ================= МУЖСЬКИЙ ГОЛОС ================= */
+
+let maleVoice = null;
+
+function loadVoices() {
+  const voices = speechSynthesis.getVoices();
+
+  maleVoice = voices.find(v =>
+    v.lang === "uk-UA" &&
+    (
+      v.name.toLowerCase().includes("ostap") ||
+      v.name.toLowerCase().includes("pavlo") ||
+      v.name.toLowerCase().includes("male") ||
+      v.name.toLowerCase().includes("google")
+    )
+  );
+
+  if (!maleVoice) {
+    maleVoice = voices.find(v => v.lang === "uk-UA");
+  }
+
+  console.log("Голос:", maleVoice ? maleVoice.name : "не знайдено");
+}
+
+speechSynthesis.onvoiceschanged = loadVoices;
+
+/* ================= ОЗВУЧКА ================= */
+
+function speak(text) {
+  const u = new SpeechSynthesisUtterance(text);
+  u.lang = "uk-UA";
+  if (maleVoice) u.voice = maleVoice;
+  speechSynthesis.speak(u);
+}
+
+/* ================= КНОПКИ ================= */
+
+function nextText() {
+  if (index >= texts.length) return;
+
+  const now = new Date();
+  const timeStr = now.toLocaleTimeString();
+
+  document.getElementById("displayText").textContent = texts[index];
+  document.getElementById("timeInfo").textContent = "Час: " + timeStr;
+
+  clickSound.play();
+
+  speak("Наступна зупинка");
+  speak(texts[index]);
+
+  const li = document.createElement("li");
+  li.textContent = texts[index] + " (" + timeStr + ")";
+  historyList.appendChild(li);
+
+  index++;
+}
+
+function resetText() {
+  index = 0;
+  document.getElementById("displayText").textContent = "Натисніть «Далі»";
+  document.getElementById("timeInfo").textContent = "";
+  historyList.innerHTML = "";
+}
+
+/* ================= МАПА ================= */
+
+const map = L.map("map").setView([50.4501, 30.5234], 7);
+
+L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
+  attribution: "© OpenStreetMap",
+  maxZoom: 18
+}).addTo(map);
+
+let markerLayer = L.layerGroup().addTo(map);
+
+function applyStops() {
+  const text = document.getElementById("stopsEditor").value.trim();
+  const lines = text.split("\n");
+
+  texts = [];
+  markerLayer.clearLayers();
+  const coords = [];
+
+  lines.forEach(line => {
+    const p = line.split(",");
+    if (p.length === 3) {
+      const name = p[0].trim();
+      const lat = parseFloat(p[1]);
+      const lon = parseFloat(p[2]);
+
+      if (!isNaN(lat) && !isNaN(lon)) {
+        texts.push(name);
+        coords.push([lat, lon]);
+        L.marker([lat, lon]).addTo(markerLayer).bindPopup(name);
+      }
+    }
+  });
+
+  if (coords.length > 1) {
+    L.polyline(coords, { color: "blue", weight: 4 }).addTo(markerLayer);
+    map.fitBounds(coords);
+  }
+
+  resetText();
+}
+
+function addMarkerMode() {
+  alert("Клікніть на мапі, щоб додати зупинку");
+  addingMarker = true;
+}
+
+map.on("click", e => {
+  if (!addingMarker) return;
+
+  const name = prompt("Введіть назву зупинки:");
+  if (name) {
+    const lat = e.latlng.lat.toFixed(6);
+    const lon = e.latlng.lng.toFixed(6);
+
+    const editor = document.getElementById("stopsEditor");
+    editor.value += (editor.value.trim() ? "\n" : "") + `${name},${lat},${lon}`;
+    applyStops();
+  }
+  addingMarker = false;
+});
+
+/* ================= ЗУПИНКИ ЗА ЗАМОВЧУВАННЯМ ================= */
+
+document.getElementById("stopsEditor").value =
+`Київ,50.4501,30.5234
+Житомир,50.2547,28.6587
+Рівне,50.6199,26.2516
+Луцьк,50.7472,25.3254
+Львів,49.8397,24.0297`;
+
+applyStops();
+
+/* ================= КОРИСТУВАЦЬКЕ АУДІО ================= */
+
+function importSounds(event) {
+  const files = event.target.files;
+  const menu = document.getElementById("audioMenu");
+
+  for (let i = 0; i < files.length; i++) {
+    const file = files[i];
+    const audio = new Audio(URL.createObjectURL(file));
+    audio.id = "userAudio" + Date.now() + i;
+
+    const div = document.createElement("div");
+    div.innerHTML = `
+      <strong>${file.name}</strong><br>
+      <button onclick="document.getElementById('${audio.id}').play()">▶️</button>
+      <button onclick="document.getElementById('${audio.id}').pause()">⏸</button>
+    `;
+    div.appendChild(audio);
+    menu.appendChild(div);
+  }
+}
+</script>
 
 </body>
 </html>
