@@ -14,7 +14,7 @@
       padding: 20px;
     }
     h1, h2 { color: #333; }
-    button {
+    button, input[type="file"] {
       padding: 10px 16px;
       font-size: 16px;
       margin: 5px;
@@ -32,6 +32,9 @@
       margin: 20px 0;
       box-shadow: 0 4px 8px rgba(0,0,0,0.1);
     }
+    .time { color: gray; font-size: 14px; }
+    ul { list-style: none; padding: 0; }
+    li { margin: 5px 0; }
     #map {
       height: 400px;
       border-radius: 12px;
@@ -50,31 +53,46 @@
 <body>
 
 <div class="card">
-  <h1 id="displayText">Очікування руху…</h1>
+  <h1 id="displayText">Очікування місцеположення…</h1>
+  <p class="time" id="timeInfo"></p>
+  <button onclick="nextText()">Далі (ручний)</button>
+  <button onclick="resetText()">Скинути</button>
+</div>
+
+<div class="card">
+  <h2>Історія</h2>
+  <ul id="historyList"></ul>
 </div>
 
 <div class="card">
   <h2>Редактор зупинок</h2>
   <textarea id="stopsEditor"></textarea><br>
-  <button onclick="applyStops()">Застосувати маршрут</button>
+  <button onclick="applyStops()">Застосувати</button>
 </div>
 
 <div class="card">
-  <h2>Мапа (клік — рух автобуса)</h2>
+  <h2>Мапа</h2>
   <div id="map"></div>
 </div>
+
+<audio id="clickSound" src="click.mp3"></audio>
 
 <script src="https://unpkg.com/leaflet/dist/leaflet.js"></script>
 
 <script>
-/* ===== ДАНІ ===== */
+/* ================= ДАНІ ================= */
 
+let texts = [];
 let stops = [];
-let stopIndex = 0;
-let announced = new Set();
-const AUTO_DISTANCE = 50; // метри
+let index = 0;
 
-/* ===== МУЖСЬКИЙ ГОЛОС ===== */
+const AUTO_DISTANCE = 50; // метри
+let lastAutoIndex = -1;
+
+const historyList = document.getElementById("historyList");
+const clickSound = document.getElementById("clickSound");
+
+/* ================= МУЖСЬКИЙ ГОЛОС ================= */
 
 let maleVoice = null;
 
@@ -99,7 +117,36 @@ function speak(text) {
   speechSynthesis.speak(u);
 }
 
-/* ===== МАПА ===== */
+/* ================= ЛОГІКА «ДАЛІ» ================= */
+
+function nextText() {
+  if (index >= texts.length) return;
+
+  const time = new Date().toLocaleTimeString();
+
+  document.getElementById("displayText").textContent = texts[index];
+  document.getElementById("timeInfo").textContent = "Час: " + time;
+
+  clickSound.play();
+  speak("Наступна зупинка");
+  speak(texts[index]);
+
+  const li = document.createElement("li");
+  li.textContent = texts[index] + " (" + time + ")";
+  historyList.appendChild(li);
+
+  index++;
+}
+
+function resetText() {
+  index = 0;
+  lastAutoIndex = -1;
+  document.getElementById("displayText").textContent = "Очікування місцеположення…";
+  document.getElementById("timeInfo").textContent = "";
+  historyList.innerHTML = "";
+}
+
+/* ================= МАПА ================= */
 
 const map = L.map("map").setView([50.4501, 30.5234], 13);
 
@@ -108,17 +155,9 @@ L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
 }).addTo(map);
 
 let layer = L.layerGroup().addTo(map);
+let userMarker = L.marker([50.4501, 30.5234]).addTo(map);
 
-// автобус
-let busMarker = L.marker([50.4501, 30.5234], {
-  icon: L.divIcon({
-    html: "🚌",
-    iconSize: [30, 30],
-    className: ""
-  })
-}).addTo(map);
-
-/* ===== ГЕОДИСТАНЦІЯ ===== */
+/* ================= ГЕОДИСТАНЦІЯ ================= */
 
 function distance(a, b) {
   const R = 6371000;
@@ -127,48 +166,53 @@ function distance(a, b) {
   const lat1 = a.lat * Math.PI / 180;
   const lat2 = b.lat * Math.PI / 180;
 
-  const x = dLat / 2;
-  const y = dLon / 2;
-
   const h =
-    Math.sin(x) * Math.sin(x) +
+    Math.sin(dLat / 2) ** 2 +
     Math.cos(lat1) * Math.cos(lat2) *
-    Math.sin(y) * Math.sin(y);
+    Math.sin(dLon / 2) ** 2;
 
   return 2 * R * Math.asin(Math.sqrt(h));
 }
 
-/* ===== АВТООЗВУЧКА ===== */
+/* ================= АВТОКЛИК ================= */
 
-function checkAutoAnnouncement() {
-  const busPos = busMarker.getLatLng();
+function checkAutoNext(pos) {
+  if (index >= stops.length) return;
 
-  stops.forEach((stop, i) => {
-    if (announced.has(i)) return;
+  const d = distance(pos, stops[index].latlng);
+  if (d <= AUTO_DISTANCE && index !== lastAutoIndex) {
+    lastAutoIndex = index;
+    nextText(); // АВТОКЛИК
+  }
+}
 
-    const d = distance(busPos, stop.latlng);
-    if (d <= AUTO_DISTANCE) {
-      announced.add(i);
-      document.getElementById("displayText").textContent = stop.name;
-      speak("Наступна зупинка");
-      speak(stop.name);
-    }
+/* ================= GPS ================= */
+
+if (navigator.geolocation) {
+  navigator.geolocation.watchPosition(pos => {
+    const latlng = {
+      lat: pos.coords.latitude,
+      lng: pos.coords.longitude
+    };
+
+    userMarker.setLatLng(latlng);
+    map.setView(latlng, map.getZoom());
+
+    checkAutoNext(latlng);
+  }, err => {
+    alert("Помилка GPS: " + err.message);
+  }, {
+    enableHighAccuracy: true,
+    maximumAge: 1000
   });
 }
 
-/* ===== РУХ АВТОБУСА (КЛІК ПО МАПІ) ===== */
-
-map.on("click", e => {
-  busMarker.setLatLng(e.latlng);
-  checkAutoAnnouncement();
-});
-
-/* ===== ЗУПИНКИ ===== */
+/* ================= ЗУПИНКИ ================= */
 
 function applyStops() {
   layer.clearLayers();
   stops = [];
-  announced.clear();
+  texts = [];
 
   const lines = document.getElementById("stopsEditor").value.trim().split("\n");
 
@@ -179,13 +223,17 @@ function applyStops() {
       const lat = parseFloat(p[1]);
       const lon = parseFloat(p[2]);
 
-      const marker = L.marker([lat, lon]).addTo(layer).bindPopup(name);
-      stops.push({ name, latlng: L.latLng(lat, lon), marker });
+      const latlng = L.latLng(lat, lon);
+      texts.push(name);
+      stops.push({ name, latlng });
+      L.marker(latlng).addTo(layer).bindPopup(name);
     }
   });
+
+  resetText();
 }
 
-/* ===== ДАНІ ЗА ЗАМОВЧУВАННЯМ ===== */
+/* ================= ЗА ЗАМОВЧУВАННЯМ ================= */
 
 document.getElementById("stopsEditor").value =
 `Київ,50.4501,30.5234
